@@ -1,0 +1,125 @@
+{
+    "csv_columns": {
+        "rename": {
+            "csv_reel": "Reel",
+            "csv_match": "Match",
+            "csv_track": "V",
+            "csv_speed": "Dur",
+            "csv_sin": "Source In",
+            "csv_sout": "Source Out",
+            "csv_rin": "Record In",
+            "csv_rout": "Record Out",
+            "csv_fnm": "Name",
+            "csv_res": "Resolution"
+        },
+        "_help_rename": "renames important columns to standard names",
+        "required": [
+            "csv_reel",
+            "csv_fnm",
+            "csv_sin",
+            "csv_sout",
+            "csv_rin",
+            "csv_rout"
+        ],
+        "_help_required": "checks if important columns exist; done after renaming"
+    },
+    "csv_match_skip": [
+        {
+            "column": "csv_match",
+            "pattern": "^(.*)$",
+            "repl": "",
+            "equals": "X",
+            "invert": false
+        },
+        {
+            "column": "csv_speed",
+            "pattern": "^(\\d+)$",
+            "repl": "",
+            "equals": "",
+            "invert": true
+        },
+        {
+            "column": "csv_rin",
+            "pattern": "^(\\d{2}}:\\d{2}:\\d{2}:\\d{2})$",
+            "repl": "",
+            "equals": "",
+            "invert": true
+        }
+    ],
+    "csv_matching": {
+        "column": "csv_reel",
+        "csv_pattern": "^(.*)$",
+        "csv_repl": "\\1",
+        "media": "{clean_name_no_sep}",
+        "media_pattern": "^(mw_\\d\\d\\d_\\d\\d_\\d\\d\\d\\d).*$",
+        "media_repl": "\\1",
+        "_help": "outputs media_key, matching tests if csv regex == media regex"
+    },
+    "edl": { 
+        "frame_rate": 25,
+        "drop_frame": false,
+        "max_reel": 48,
+        "custom_folder": "e:/",
+        "use_custom_folder": false,
+        "use_media_root": true,
+        "use_media_root_up": false,
+        "edl_name_prefix": "",
+        "edl_name_suffix": "",
+        "edl_name_from_csv": true,
+        "edl_name_from_media_folder": false,
+        "edl_name_custom": "",
+        "_help": "outputs media_key, matching tests if csv regex == media regex"
+    },
+    "edl_clip": {
+        "source": "{media_file}",
+        "pattern": "^(.*)$",
+        "repl": "* FROM CLIP NAME: \\1",
+        "export": true,
+        "_help": "outputs separate EDL line, used for AVID remarks"
+    },
+    "edl_clip_path": {
+        "source": "{media_path}",
+        "pattern": "^(.*)$",
+        "repl": "* PATH: \\1",
+        "export": true,
+        "_help": "outputs separate EDL line, used for AVID remarks"
+    },
+    "edl_reel": {
+        "source": "{media_key}",
+        "pattern": "^(.*)$",
+        "repl": "\\1",
+        "_help": "outputs reel, or AX if regex fails"
+    },
+    "group_csv": {
+        "group": false,
+        "highest_only": true,
+        "common": "^(\\D{2}_\\d{3})_(.*)\\.csv$",
+        "sort": "^\\D{2}_\\d{3}_(.*)\\.csv$",
+        "_help": "the common and sort regexes help to split each csv file name"
+    },
+    "media_meta": {
+        "ffprobe": true,
+        "ffprobe_path": "./ffprobe/ffprobe",
+        "oiio": true,
+        "oiio_path": "./oiio/oiiotool",
+        "_help": "if starting with ./, it is a path relative to script",
+        "_help_ffprobe": "timecode, width, height, pa, fps, duration_frames, category"
+    },
+    "search_csv": {
+        "root_folder": "e:/edit_test_csv",
+        "filter_include": ".csv",
+        "filter_exclude": "",
+        "pattern": "",
+        "recursive": false,
+        "check_required_columns": true,
+        "_help": "include and exclude just tests strings, no regex"
+    },
+    "search_media": {
+        "root_folder": "e:/edit_test_media",
+        "filter_include": "",
+        "filter_exclude": ".exr",
+        "pattern": "^.*_edit.mov$",
+        "recursive": false,
+        "_help": "include and exclude just tests strings, no regex"
+    }
+}
