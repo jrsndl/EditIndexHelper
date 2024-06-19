@@ -45,7 +45,7 @@ Functionality
 4.1 The EDL options control edl path and file name, plus frame rate options. Max reel option trims the reel to the number of characters specified.
 4.2 Edl reel options allow to run regex search and replace on source. Result is used for reel in the edl
 4.3 Edl clip options allow to run regex search and replace on source. Result is used for additional remark line
-4.3 Edl clip path options allow to run regex search and replace on source. Result is used for additional remark line.
+4.4 Edl clip path options allow to run regex search and replace on source. Result is used for additional remark line.
 
 
 Possible future updates can do:
