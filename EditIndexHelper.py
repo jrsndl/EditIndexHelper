@@ -882,19 +882,16 @@ def main() -> None:
         prefs['search_media']['root_folder'] = search_media_root
     logger.info(f"Staring with media at \n{prefs['search_media']['root_folder']}\nwith csvs at\n{prefs['search_csv']['root_folder']}\n")
 
-    tool = EditTool(prefs, script_path)
-    tool.read_csvs()
-    tool.find_media()
-    tool.prep_matching()
-    tool.csv_matching()
     try:
-        pass
+        tool = EditTool(prefs, script_path)
+        tool.read_csvs()
+        tool.find_media()
+        tool.prep_matching()
+        tool.csv_matching()
+        tool.matched_media_to_edls()
     except Exception as e:
         logger.error(e)
         exit(1)
-
-    tool.matched_media_to_edls()
-
 
 if __name__ == "__main__":
     main()
