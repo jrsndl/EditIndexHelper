@@ -54,12 +54,12 @@ Use edit index files together with marker exports from Davinci Resolve to assign
 """
 
 if getattr(sys, 'frozen', False):
-    script_path = os.path.dirname(sys.executable).replace("\\", "/")
+    script_path = str(os.path.dirname(sys.executable).replace("\\", "/"))
 else:
-    script_path = os.path.dirname(__file__).replace("\\", "/")
+    script_path = str(os.path.dirname(__file__).replace("\\", "/"))
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 formatter_time = logging.Formatter('%(asctime)s:%(levelname)s:%(message)s')
 formatter = logging.Formatter('%(levelname)s:%(message)s')
 file_handler = logging.FileHandler(script_path + '/edit-tool.log')
@@ -322,7 +322,11 @@ class EditTool:
                     'fps': float(eval(str(stream.get("r_frame_rate", '0')))), # 24.0
                     'duration_frames': int(stream.get("nb_frames", '0')),
                     'duration_secs': float(stream.get("duration", '0.0')), # "38.333333" seconds
-                    'category': get_category(full_path)
+                    'category': get_category(full_path),
+                    'timecode': None,
+                    'tc_in_frames': None,
+                    'tc_out': None,
+                    'tc_out_frames': None
                 }
 
             stream_tc = next((s for s in _s if s.get("codec_tag_string") == "tmcd"), {})
@@ -339,6 +343,12 @@ class EditTool:
                 metadata['duration_frames'] = seconds_to_frames(seconds=float(ds), fps=float(fps))
             else:
                 logger.error("get_metadata: failed to calculate frame duration. Duration in seconds: {} fps: {}.".format(ds, fps))
+
+            # calculate stc in stc out
+            if metadata['duration_frames'] is not None and metadata['duration_frames'] != 0 and metadata['timecode'] is not None:
+                metadata['tc_in_frames'] = int(self.tc_to_frames(metadata['timecode'], fps))
+                metadata['tc_out_frames'] = metadata['tc_in_frames'] + int(metadata['duration_frames']) - 1
+                metadata['tc_out'] = str(self.frames_to_tc(metadata['tc_out_frames'], fps))
 
         return metadata
 
@@ -358,11 +368,14 @@ class EditTool:
         if files and len(files) > 0:
             for one_file in files:
                 if include != '' and include not in one_file:
+                    #print(f"Skip file {one_file} due to include filter.")
                     continue
                 if exclude != '' and exclude in one_file:
+                    #print(f"Skip file {one_file} due to exclude filter.")
                     continue
                 if pattern != '':
                     if not bool(re.match(pattern, os.path.basename(one_file))):
+                        logger.debug(f"Skip file {os.path.basename(one_file)} due to pattern filter.")
                         continue
                 file_list.append(one_file)
         else:
@@ -399,6 +412,8 @@ class EditTool:
             for csv_path, one_csv in csvs.items():
                 name = os.path.basename(csv_path)
                 m_c = common_compiled.search(name)
+                result_common = None
+                result_sort = None
                 if m_c:
                     try:
                         result_common = m_c.group(1)
@@ -411,7 +426,7 @@ class EditTool:
                     except:
                         pass
                 one_rec = {'csv_path': csv_path, 'csv_name': name, 'group': result_common, 'sort': result_sort}
-                if sort_me.get(result_common):
+                if result_common is not None and sort_me.get(result_common) is not None:
                     sort_me[result_common].append(one_rec)
                 else:
                     sort_me[result_common] = [one_rec]
@@ -442,6 +457,23 @@ class EditTool:
         Dict where key is full path to csv file and
         value is the csv contents as a list of dicts
         """
+
+        def is_match_skip(csv_line):
+            filter_matches = 0
+            for one_filter in self.prefs['csv_match_skip']:
+                reg_test = self.regex_test(csv_line.get(one_filter['column']), {}, one_filter['pattern'], one_filter['repl'])
+                if reg_test and reg_test != '':
+                    if one_filter['invert']:
+                        if one_filter['equals'] != '' and one_filter['equals'] != reg_test:
+                            filter_matches += 1
+                    else:
+                        if one_filter['equals'] != '' and one_filter['equals'] == reg_test:
+                            filter_matches += 1
+
+            if filter_matches > 0:
+                return True
+            else:
+                return False
         def csv_tc_to_frames(one_line) -> dict:
 
             fps = float(self.prefs['edl']['frame_rate'])
@@ -488,6 +520,7 @@ class EditTool:
         for one_csv in csv_files:
             one_csv = one_csv.replace('\\', '/')
             csv_listdict = []
+            valid_lines = 0
             if one_csv and one_csv != '' and os.path.exists(one_csv):
                 try:
                     with open(one_csv) as csvfile:
@@ -496,24 +529,44 @@ class EditTool:
                             line_dict = dict(row)
                             line_dict = rename_columns(line_dict)
                             line_dict = csv_tc_to_frames(line_dict)
+                            line_dict['csv_key'] = '' # for matching
+                            if is_match_skip(line_dict):
+                                line_dict['csv_skip_line'] = True
+                            else:
+                                line_dict['csv_skip_line'] = False
+                                valid_lines += 1
                             csv_listdict.append(line_dict)
                 except IOError:
                     logger.error('Error opening csv file {}'.format(one_csv))
             skip = True
             if csv_listdict and len(csv_listdict) > 0:
-                skip = False
-                columns = list(csv_listdict[0].keys())
-                if self.prefs['search_csv']['check_required_columns']:
-                    if not set(required_columns).issubset(columns):
-                        skip = True
-                        logger.warning('Csv file {} is missing required column(s). Skipping'.format(one_csv))
+                if valid_lines == 0:
+                    logger.warning(f"Csv file {os.path.basename(one_csv)} has no valid lines. Skipping file.")
+                else:
+                    skip = False
+                    columns = list(csv_listdict[0].keys())
+                    if self.prefs['search_csv']['check_required_columns']:
+                        if not set(required_columns).issubset(columns):
+                            skip = True
+                            logger.warning(f"Csv file {os.path.basename(one_csv)} is missing required column(s). Skipping file.")
             if not skip:
+                logger.debug(f"Adding csv file {os.path.basename(one_csv)} with {valid_lines} valid lines.")
                 csvs[one_csv] = csv_listdict
 
         if csvs is None or csvs == {}:
             raise EditToolException(f"No readable csv files found at {self.prefs['search_csv']['root_folder']}")
+        else:
+            logger.info(f"read_csvs -> Found {len(list(csvs.keys()))} Csv file(s).")
+
 
         self.csvs = self._group_csvs(csvs)
+        grouped_csvs_count = len(list(self.csvs.keys()))
+        logger.info(f"read_csvs -> Found {grouped_csvs_count} Csv file(s) after grouping.")
+
+        cnt = 0
+        for one_csv, lst in self.csvs.items():
+            cnt +=1
+            logger.info(f"read_csvs -> {cnt} Csv file :{os.path.basename(one_csv)}")
 
     def find_media(self):
         """ Get media data
@@ -527,10 +580,6 @@ class EditTool:
 
         """
 
-        class Default(dict):
-            def __missing__(self, key):
-                return '{' + key + '}'
-
         self.media = {}
         media_files = self.get_file_list(
             root=self.prefs['search_media']['root_folder'],
@@ -542,93 +591,118 @@ class EditTool:
         if media_files is None or len(media_files) == 0:
             raise EditToolException("Folder {} has no media files.".format(self.prefs['search_media']['root_folder']))
 
-        media_source_tokens = self.prefs['csv_matching']['media']
-        media_pattern = self.prefs['csv_matching']['media_pattern']
-        regex_valid = False
         try:
-            compiled = re.compile(media_pattern)
-            regex_valid = True
+            _ = re.compile(self.prefs['csv_matching']['media_pattern'])
         except re.error as e:
             logger.error("CSV matching media pattern regex error:\n{}".format(e))
-        media_repl = self.prefs['csv_matching']['media_repl']  # "\\1"
+            return None
 
         for one_file in media_files:
-            media_source = media_source_tokens.format_map(Default(self.parse_file_name(one_file)))
-            result = ''
-            if regex_valid:
-                if media_repl and media_repl != '':
-                    try:
-                        result = re.sub(compiled, media_repl, media_source)
-                    except:
-                        pass
-                else:
-                    m = compiled.search(media_source)
-                    if m:
-                        try:
-                            capture = m.group(1)
-                            result = capture
-                        except:
-                            pass
-            else:
-                result = media_source
-            if result != '':
+            result = self.regex_test(self.prefs['csv_matching']['media'],
+                                     self.parse_file_name(one_file),
+                                     self.prefs['csv_matching']['media_pattern'],
+                                     self.prefs['csv_matching']['media_repl'])
+            if result is not None and result != '':
                 meta = self.get_metadata(one_file)
                 if meta is None or meta == {}:
                     meta = {}
                     logger.error(f"Failed to read metadata from file {one_file}")
                 self.media[result] = {'file': one_file, 'metadata': meta}
             else:
-                logger.error(f"Failed to get valid key for media file {one_file}")
+                logger.error(f"find_media -> Failed to get regex result for {os.path.basename(one_file)}")
+
+        if self.media is not None and self.media != {}:
+            logger.info(f"find_media -> Found {len(list(self.media.keys()))} media file(s).")
+
+        return self.media
+
+    def prep_matching(self):
+        """
+        Runs regex on every csv line
+        """
+
+        # reset matching
+        for csv_file, one_csv in self.csvs.items():
+            for one_line in one_csv:
+                one_line['csv_key'] = ''
+
+        for csv_file, one_csv in self.csvs.items():
+            cnt = 0
+            for one_line in one_csv:
+                cnt += 1
+
+                # reset matching
+                one_line['csv_key'] = ''
+
+                # skip line
+                if one_line['csv_skip_line']:
+                    continue
+                result = self.regex_test(one_line.get(self.prefs['csv_matching']['column']), {},
+                                         self.prefs['csv_matching']['csv_pattern'],
+                                         self.prefs['csv_matching']['csv_repl'])
+                if result is not None and result != '':
+                    one_line['csv_key'] = result
+
+        return self.csvs
 
     def csv_matching(self):
         """ CSV matching the media files
 
         :return:
         """
-        def is_match_skip(csv_line):
+        def is_tc_matching(csv_in, media_in, csv_out, media_out):
+            result = False
+            if csv_in is None or media_in is None or csv_out is None or media_out is None:
+                return result
+            if csv_in >= media_in and csv_out <= media_out:
+                result = True
+            return result
 
-            filter_matches = 0
-            for one_filter in self.prefs['csv_match_skip']:
-                reg_test = self.regex_test(csv_line.get(one_filter['column']), {}, one_filter['pattern'], one_filter['repl'])
-                if reg_test and reg_test != '':
-                    if one_filter['invert']:
-                        if one_filter['equals'] != '' and one_filter['equals'] != reg_test:
-                            filter_matches += 1
-                    else:
-                        if one_filter['equals'] != '' and one_filter['equals'] == reg_test:
-                            filter_matches += 1
-
-            if filter_matches > 0:
-                return True
-            else:
-                return False
+        match_tc = self.prefs['csv_matching'].get('match_timecode', False)
         if self.media is None or self.media == {}:
             raise EditToolException("No suitable media files found for csv matching.")
         if self.csvs is None or self.csvs == {}:
             raise EditToolException("No suitable csv files found for matching.")
 
+        matched_media_counter = 0
+        media_not_matched = []
         for media_key, media_dict in self.media.items():
             found = False
             for csv_file, one_csv in self.csvs.items():
                 cnt = 0
                 for one_line in one_csv:
                     cnt += 1
-                    result = self.regex_test(one_line.get(self.prefs['csv_matching']['column']), {},
-                                    self.prefs['csv_matching']['csv_pattern'], self.prefs['csv_matching']['csv_repl'])
-                    if result != '' and result == media_key:
-                        if not is_match_skip(one_line):
+                    # check if skip line due to skip filters
+                    if one_line['csv_skip_line']:
+                        continue
+                    if one_line['csv_key'] == media_key:
+                        if match_tc:
+                            tc_ok = is_tc_matching(one_line['csv_sin_frames'], media_dict['metadata']['tc_in_frames'], one_line['csv_sout_frames'], media_dict['metadata']['tc_out_frames'])
+                        else:
+                            tc_ok = True
+                        if tc_ok:
                             media_dict['csv_line'] = one_line
                             media_dict['csv_file'] = csv_file
+                            one_line['csv_matched_media'] = media_dict['file']
                             found = True
-                            logger.debug(f"Found matching csv line for the media {media_key} : {media_dict['file']} at {csv_file} line {cnt}")
+                            matched_media_counter += 1
+                            logger.debug(f"csv_matching -> Found matching csv line for {os.path.basename(media_dict['file'])} at {os.path.basename(csv_file)} line {cnt}")
                             # first found media is enough
                             break
+                        else:
+                            if match_tc:
+                                logger.debug(f"csv_matching -> Csv line for {os.path.basename(media_dict['file'])} at {os.path.basename(csv_file)} line {cnt} not matching timecode.")
                 if found:
                     # first found media is enough
                     break
             if not found:
-                logger.debug(f"Matching csv line for the media file {media_key} : {media_dict['csv_file']} not found.")
+                logger.debug(f"csv_matching -> Matching csv line for the media file {media_key} not found.")
+                media_not_matched.append(media_dict['file'])
 
+        logger.info(f"csv_matching -> Matched {matched_media_counter}  from {len(list(self.media.keys()))} media files")
+        if len(media_not_matched) > 0:
+            logger.warning(f"csv_matching -> {len(media_not_matched)} media not matched to csv")
+            logger.info(f"{pprint.pformat(media_not_matched)}")
 
     def matched_media_to_edls(self):
 
@@ -677,11 +751,12 @@ class EditTool:
         for media_key, media_dict in self.media.items():
             my_media = media_dict
             my_media['media_key'] = media_key
-            _exists = by_csv.get(media_dict['csv_file'])
-            if _exists:
-                by_csv[media_dict['csv_file']].append(my_media)
+            _f = media_dict.get('csv_file')
+            _exists = by_csv.get(_f)
+            if _exists and _f:
+                by_csv[_f].append(my_media)
             else:
-                by_csv[media_dict['csv_file']] = [my_media]
+                by_csv[_f] = [my_media]
 
         if self.prefs['edl']['drop_frame']:
             fcm = 'FCM: DROP FRAME\n\n'
@@ -690,7 +765,9 @@ class EditTool:
 
         matched_media_count = 0
         for one_csv, medias in by_csv.items():
-            sorted_medias = sorted(medias, key=lambda d: d['csv_line']['csv_rin_frames'])
+            if one_csv is None:
+                continue
+            sorted_medias = sorted(medias, key=lambda d: d.get('csv_line', {}).get('csv_rin_frames'))
 
             # edl folder:
             edl_root = self.prefs['edl']['custom_folder'].replace('\\', '/')
@@ -699,6 +776,8 @@ class EditTool:
                 edl_root = first_media_path
             elif self.prefs['edl']['use_media_root_up']:
                 edl_root = '/'.join(first_media_path.split('/')[:-1])
+            logger.debug(f"The EDL root is {edl_root}")
+
             # edl name:
             edl_name = self.prefs['edl']['edl_name_custom']
             if self.prefs['edl']['edl_name_from_csv']:
@@ -706,6 +785,7 @@ class EditTool:
             elif self.prefs['edl']['edl_name_from_media_folder']:
                 edl_name = first_media_path.split('/')[-1]
             edl_name = self.prefs['edl']['edl_name_prefix'] + edl_name + self.prefs['edl']['edl_name_suffix']
+            logger.debug(f"The EDL root is {edl_name}")
 
             header = f"TITLE: {edl_name}\n" + fcm
             cnt = 0
@@ -754,9 +834,7 @@ def main() -> None:
         )
         return parser.parse_args()
 
-    def get_prefs(path, script_path):
-        if not path or path == '':
-            pth = script_path + '/prefs.json'
+    def get_prefs(pth, script_path):
         prefs = {}
         try:
             with open(pth, 'r') as json_data:
@@ -768,7 +846,8 @@ def main() -> None:
             if platform.system() == 'Windows' and not fp.endswith('.exr'):
                 prefs['media_meta']['ffprobe_path'] += '.exe'
             if not os.path.exists(prefs['media_meta']['ffprobe_path']):
-                logger.error("Ffprobe not found at {}.".format(prefs['media_meta']['ffprobe_path']))
+                logger.error(f"Ffprobe not found at {prefs['media_meta']['ffprobe_path']}, exiting")
+                exit(1)
 
             op = prefs['media_meta']['oiio_path']
             if op.startswith('./'):
@@ -782,30 +861,41 @@ def main() -> None:
             logger.error("Error opening prefs file {}\n{}".format(str(pth), e))
         return prefs
 
+    # command line args
     args = vars(get_args())
-    prefs = get_prefs(args.get('p'), script_path)
+
+    # read prefs file
+    cmd_prefs = args.get('p')
+    if not cmd_prefs or cmd_prefs == '':
+        cmd_prefs = script_path + '/prefs.json'
+    prefs = get_prefs(cmd_prefs, script_path)
     if prefs is None or prefs == {}:
-        logger.error("Preferences not found, exiting")
+        logger.error("Preferences not found, exiting.")
         exit(1)
 
-    # command line arguments have precedence
+    # command line arguments for csv and media folders have precedence
     search_csv_root = args.get('i')
     if search_csv_root:
         prefs['search_csv']['root_folder'] = search_csv_root
     search_media_root = args.get('m')
     if search_media_root:
         prefs['search_media']['root_folder'] = search_media_root
+    logger.info(f"Staring with media at \n{prefs['search_media']['root_folder']}\nwith csvs at\n{prefs['search_csv']['root_folder']}\n")
 
+    tool = EditTool(prefs, script_path)
+    tool.read_csvs()
+    tool.find_media()
+    tool.prep_matching()
+    tool.csv_matching()
     try:
-        tool = EditTool(prefs, script_path)
-        tool.read_csvs()
-        tool.find_media()
-        tool.csv_matching()
-        tool.matched_media_to_edls()
+        pass
     except Exception as e:
         logger.error(e)
         exit(1)
 
+    tool.matched_media_to_edls()
+
 
 if __name__ == "__main__":
     main()
+

@@ -48,11 +48,12 @@
     ],
     "csv_matching": {
         "column": "csv_reel",
-        "csv_pattern": "^(.*)$",
+        "csv_pattern": "^(.{0,14}).*$",
         "csv_repl": "\\1",
         "media": "{clean_name_no_sep}",
-        "media_pattern": "^(mw_\\d\\d\\d_\\d\\d_\\d\\d\\d\\d).*$",
+        "media_pattern": "^(mw|MW|Mw_\\d\\d\\d_\\d\\d_\\d\\d\\d\\d).*$",
         "media_repl": "\\1",
+        "match_timecode": true,
         "_help": "outputs media_key, matching tests if csv regex == media regex"
     },
     "edl": { 
